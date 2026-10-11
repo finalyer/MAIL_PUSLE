@@ -1,5 +1,8 @@
+
 from fastapi import FastAPI
+
 from fastapi.middleware.cors import CORSMiddleware
+
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.core.config import settings
@@ -19,7 +22,14 @@ app = FastAPI(
 )
 
 # Session middleware (for OAuth state and user session)
-app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
+# same_site="lax" + https_only=False is required for local dev (Vite proxy :5173 → :8000)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.SECRET_KEY,
+    same_site="lax",
+    https_only=False,
+    max_age=86400,  # 1 day
+)
 
 # CORS — allow local frontend dev server
 app.add_middleware(

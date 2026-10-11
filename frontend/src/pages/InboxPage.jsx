@@ -1,225 +1,512 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Search, Star, Mail, RefreshCw } from 'lucide-react'
-import { getThreads, getEmails, search } from '../api'
-import { formatDistanceToNow, format } from 'date-fns'
-
-function EmailAvatar({ name, email }) {
-  const letter = (name || email || '?')[0].toUpperCase()
-  const colors = ['#7c3aed','#06b6d4','#f59e0b','#10b981','#ef4444','#8b5cf6']
-  const color = colors[(letter.charCodeAt(0)) % colors.length]
-  return (
-    <div className="avatar" style={{ background: color, width: 36, height: 36, fontSize: 14 }}>
-      {letter}
-    </div>
-  )
-}
-
-function ThreadRow({ thread, selected, onClick }) {
-  const isUnread = thread.messages?.some(m => !m.is_read) ?? false
-  const sender = thread.messages?.[0]?.sender_name || thread.messages?.[0]?.sender_email || 'Unknown'
-  const date = thread.last_message_at
-    ? formatDistanceToNow(new Date(thread.last_message_at), { addSuffix: false })
-    : ''
-
-  return (
-    <div
-      className={`thread-item ${isUnread ? 'unread' : ''} ${selected ? 'selected' : ''}`}
-      onClick={onClick}
-      id={`thread-${thread.id}`}
-    >
-      <EmailAvatar name={sender} />
-      <div style={{ minWidth: 0 }}>
-        <div className="thread-sender truncate">{sender}</div>
-        <div className="thread-subject truncate">{thread.subject}</div>
-        <div className="thread-snippet truncate">{thread.snippet}</div>
-      </div>
-      <div className="thread-meta">
-        <div className="thread-time">{date}</div>
-        {isUnread && <div className="unread-dot" style={{ marginLeft: 'auto', marginTop: 6 }} />}
-        {thread.message_count > 1 && (
-          <div className="text-muted" style={{ fontSize: 10, marginTop: 4 }}>{thread.message_count}</div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function EmailDetail({ threadId }) {
-  const [thread, setThread] = useState(null)
-  const [selectedMsg, setSelectedMsg] = useState(null)
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (!threadId) return
-    setLoading(true)
-    setSelectedMsg(null)
-    // Fetch all messages in this thread via /emails?thread_id=
-    getEmails({ thread_id: threadId, page: 1, page_size: 100 })
-      .then(r => {
-        const msgs = r.data?.items || []
-        setThread(msgs)
-        if (msgs.length) setSelectedMsg(msgs[msgs.length - 1])
-      })
-      .catch(() => setThread(null))
-      .finally(() => setLoading(false))
-  }, [threadId])
-
-  if (!threadId) return (
-    <div className="empty-state" style={{ height: '100%' }}>
-      <div className="empty-icon"><Mail size={24} /></div>
-      <div className="text-secondary">Select a thread to read</div>
-    </div>
-  )
-
-  if (loading) return (
-    <div className="email-detail">
-      <div className="skeleton skel-title mb-4" />
-      <div className="skeleton skel-text mb-2" />
-      <div className="skeleton skel-text mb-2" />
-      <div className="skeleton skel-text" style={{ width: '70%' }} />
-    </div>
-  )
-
-  if (!thread?.length) return (
-    <div className="empty-state"><div className="text-muted">No messages found</div></div>
-  )
-
-  const msg = selectedMsg || thread[thread.length - 1]
-
-  return (
-    <div className="email-detail">
-      <div className="email-header">
-        <div className="email-subject">{msg.subject}</div>
-        <div className="email-from">
-          <EmailAvatar name={msg.sender_name} email={msg.sender_email} />
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>{msg.sender_name || msg.sender_email}</div>
-            <div className="text-xs text-muted">{msg.sender_email}</div>
-          </div>
-          <div className="ml-auto text-xs text-muted">
-            {msg.sent_at ? format(new Date(msg.sent_at), 'MMM d, yyyy · h:mm a') : ''}
-          </div>
-        </div>
-
-        {/* Thread messages mini list */}
-        {thread.length > 1 && (
-          <div className="flex gap-2 mt-3 flex-wrap">
-            {thread.map((m, i) => (
-              <button
-                key={m.id}
-                className={`btn btn-sm ${selectedMsg?.id === m.id ? 'btn-primary' : 'btn-ghost'}`}
-                onClick={() => setSelectedMsg(m)}
-              >
-                {i + 1}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="email-body">
-        {msg.body_text || msg.body_html
-          ? (msg.body_text || 'HTML content — preview not available')
-          : <span className="text-muted">(No body)</span>
-        }
-      </div>
-    </div>
-  )
-}
+import { useState } from 'react'
+import {
+  Search, Star, Flag, Paperclip, Sparkles, Filter, MoreHorizontal,
+  ChevronLeft, ChevronRight, CheckSquare, Square, RefreshCw, AlertTriangle,
+  Mail, Inbox, Lock
+} from 'lucide-react'
+import { mockEmails } from '../mockData'
+import EmailDetailDrawer from '../components/EmailDetailDrawer'
+import AIReviewDrawer from '../components/AIReviewDrawer'
+import ThreadViewModal from '../components/ThreadViewModal'
 
 export default function InboxPage() {
-  const [threads, setThreads] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState(null)
-  const [query, setQuery] = useState('')
-  const [page, setPage] = useState(1)
-  const [hasMore, setHasMore] = useState(false)
-  const limit = 40
+  const [filterTab, setFilterTab] = useState('all') // 'all' | 'unread' | 'starred' | 'important'
+  const [searchTerm, setSearchTerm] = useState('')
+  const [selectedEmails, setSelectedEmails] = useState([])
+  const [activeDetailEmail, setActiveDetailEmail] = useState(null)
+  const [activeAiReviewEmail, setActiveAiReviewEmail] = useState(null)
+  const [activeThreadEmail, setActiveThreadEmail] = useState(null)
+  const [emails, setEmails] = useState(mockEmails)
+  const [viewState, setViewState] = useState('normal') // 'normal' | 'syncing' | 'error' | 'connect' | 'clear'
+  const [currentPage, setCurrentPage] = useState(1)
 
-  const fetch = useCallback(async (q, p) => {
-    setLoading(true)
-    try {
-      const params = { page: p, page_size: limit }
-      if (q) params.q = q
-      const { data } = q
-        ? await search(q, { page: p, page_size: limit })
-        : await getThreads(params)
-      const list = data.items || []
-      setThreads(list)
-      setHasMore(list.length === limit)
-    } catch { setThreads([]) }
-    finally { setLoading(false) }
-  }, [])
+  // Filtering
+  const filtered = emails.filter(em => {
+    if (filterTab === 'unread' && em.isRead) return false
+    if (filterTab === 'starred' && !em.isStarred) return false
+    if (filterTab === 'important' && !em.isImportant) return false
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase()
+      const match =
+        em.subject.toLowerCase().includes(q) ||
+        em.sender.toLowerCase().includes(q) ||
+        em.senderEmail.toLowerCase().includes(q) ||
+        em.snippet.toLowerCase().includes(q)
+      if (!match) return false
+    }
+    return true
+  })
 
-  useEffect(() => { fetch(query, page) }, [query, page])
+  // Select all or toggle single
+  const toggleSelectAll = () => {
+    if (selectedEmails.length === filtered.length) {
+      setSelectedEmails([])
+    } else {
+      setSelectedEmails(filtered.map(e => e.id))
+    }
+  }
 
-  const handleSearch = (e) => {
-    setQuery(e.target.value)
-    setPage(1)
+  const toggleSelectOne = (id, e) => {
+    e.stopPropagation()
+    setSelectedEmails(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    )
+  }
+
+  const toggleStar = (id, e) => {
+    e.stopPropagation()
+    setEmails(prev => prev.map(em => em.id === id ? { ...em, isStarred: !em.isStarred } : em))
+  }
+
+  const toggleFlag = (id, e) => {
+    e.stopPropagation()
+    setEmails(prev => prev.map(em => em.id === id ? { ...em, isImportant: !em.isImportant } : em))
   }
 
   return (
-    <div className="inbox-split" style={{ height: 'calc(100vh - 56px)' }}>
-      {/* Left: thread list */}
-      <div className="inbox-left">
-        {/* Search */}
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', position:'sticky', top:0, background:'var(--bg-surface)', zIndex:2 }}>
-          <div className="search-wrapper" style={{ maxWidth: '100%' }}>
-            <Search size={14} className="search-icon" />
-            <input
-              className="search-input"
-              id="inbox-search"
-              placeholder="Search threads…"
-              value={query}
-              onChange={handleSearch}
-            />
-          </div>
+    <div className="page-container fade-in">
+      {/* ── Header ───────────────────────────────────────── */}
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Inbox</h1>
+          <p className="page-subtitle">Browse, filter, and understand your received emails.</p>
         </div>
 
-        {loading ? (
-          <div style={{ padding: 16 }}>
-            {[...Array(8)].map((_, i) => (
-              <div key={i} style={{ display:'flex', gap:12, padding:'14px 0', borderBottom:'1px solid var(--border)' }}>
-                <div className="skeleton" style={{ width:36,height:36,borderRadius:'50%',flexShrink:0 }} />
-                <div style={{ flex:1 }}>
-                  <div className="skeleton skel-text" style={{ width:'50%', marginBottom:6 }} />
-                  <div className="skeleton skel-text" style={{ width:'80%', marginBottom:6 }} />
-                  <div className="skeleton skel-text" style={{ width:'65%' }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : threads.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon"><Mail size={24} /></div>
-            <div>No threads yet</div>
-            <div className="text-xs text-muted">Connect your Gmail and trigger a sync</div>
-          </div>
-        ) : (
-          <div className="thread-list">
-            {threads.map(t => (
-              <ThreadRow
-                key={t.id}
-                thread={t}
-                selected={selected === t.id}
-                onClick={() => setSelected(t.id)}
-              />
-            ))}
-            {hasMore && (
-              <div style={{ padding: 16, textAlign: 'center' }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => setPage(p => p + 1)}>
-                  Load more
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+        {/* View State Switcher (for previewing Desktop - 4, 17, 18, 19 states) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Demo State:</span>
+          <select
+            value={viewState}
+            onChange={e => setViewState(e.target.value)}
+            className="form-select"
+            style={{ padding: '4px 8px', fontSize: 11.5 }}
+          >
+            <option value="normal">Normal Inbox (UI - 1, 11)</option>
+            <option value="syncing">Syncing State (UI - 17)</option>
+            <option value="error">Sync Error (UI - 4)</option>
+            <option value="connect">Connect Gmail (UI - 18)</option>
+            <option value="clear">Inbox Clear (UI - 19)</option>
+          </select>
+        </div>
       </div>
 
-      {/* Right: email detail */}
-      <div className="inbox-right">
-        <EmailDetail threadId={selected} />
+      {/* ── Filter Tabs & Action Toolbar ─────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+        <div className="filter-tabs-row" style={{ margin: 0 }}>
+          <button
+            className={`filter-tab-pill ${filterTab === 'all' ? 'active' : ''}`}
+            onClick={() => setFilterTab('all')}
+          >
+            <Mail size={14} />
+            <span>All Mail</span>
+            <span className="pill-count">1,248</span>
+          </button>
+
+          <button
+            className={`filter-tab-pill ${filterTab === 'unread' ? 'active' : ''}`}
+            onClick={() => setFilterTab('unread')}
+          >
+            <span>Unread</span>
+            <span className="pill-count">24</span>
+          </button>
+
+          <button
+            className={`filter-tab-pill ${filterTab === 'starred' ? 'active' : ''}`}
+            onClick={() => setFilterTab('starred')}
+          >
+            <Star size={13} />
+            <span>Starred</span>
+            <span className="pill-count">86</span>
+          </button>
+
+          <button
+            className={`filter-tab-pill ${filterTab === 'important' ? 'active' : ''}`}
+            onClick={() => setFilterTab('important')}
+          >
+            <Flag size={13} />
+            <span>Important</span>
+            <span className="pill-count">112</span>
+          </button>
+
+          <button className="filter-tab-pill">
+            <Filter size={13} />
+            <span>Filter</span>
+          </button>
+
+          <button className="filter-tab-pill" style={{ padding: '7px 10px' }}>
+            <MoreHorizontal size={14} />
+          </button>
+        </div>
+
+        {/* Search input inside inbox */}
+        <div style={{ position: 'relative', width: 280 }}>
+          <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+          <input
+            type="text"
+            className="form-input"
+            style={{ width: '100%', paddingLeft: 30, fontSize: 12.5 }}
+            placeholder="Search emails, senders, subjects..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+          />
+        </div>
       </div>
+
+      {/* ── View States Handling ─────────────────────────── */}
+
+      {/* 1. Syncing State (Desktop - 17) */}
+      {viewState === 'syncing' && (
+        <div className="empty-state-card" style={{ padding: '80px 24px' }}>
+          {/* Circular 64% Progress Ring */}
+          <div style={{ position: 'relative', width: 140, height: 140, margin: '0 auto 24px' }}>
+            <svg viewBox="0 0 100 100" style={{ transform: 'rotate(-90deg)', width: '100%', height: '100%' }}>
+              <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="8" />
+              <circle
+                cx="50" cy="50" r="40" fill="none" stroke="var(--accent-red)" strokeWidth="8"
+                strokeDasharray={`${(64 / 100) * 251.3} 251.3`}
+                strokeLinecap="round"
+              />
+            </svg>
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 700, color: '#ffffff' }}>
+              64%
+            </div>
+          </div>
+
+          <h2 className="empty-state-title" style={{ fontSize: 22 }}>Syncing your Gmail account...</h2>
+          <p className="empty-state-desc">Fetching recent emails and updating your local database.</p>
+
+          {/* 4 Stats Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, width: '100%', maxWidth: 700, marginBottom: 28 }}>
+            <div className="kpi-card" style={{ padding: '14px', alignItems: 'center', textAlign: 'center' }}>
+              <Mail size={18} color="var(--accent-red)" style={{ marginBottom: 6 }} />
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#ffffff' }}>1,248</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Emails processed</div>
+            </div>
+
+            <div className="kpi-card" style={{ padding: '14px', alignItems: 'center', textAlign: 'center' }}>
+              <RefreshCw size={18} color="var(--accent-red)" style={{ marginBottom: 6 }} />
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#ffffff' }}>64%</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Sync progress</div>
+            </div>
+
+            <div className="kpi-card" style={{ padding: '14px', alignItems: 'center', textAlign: 'center' }}>
+              <span style={{ fontSize: 16, color: 'var(--accent-red)', marginBottom: 6 }}>⏱</span>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#ffffff' }}>~ 2 min</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Estimated time</div>
+            </div>
+
+            <div className="kpi-card" style={{ padding: '14px', alignItems: 'center', textAlign: 'center' }}>
+              <span style={{ fontSize: 16, color: 'var(--accent-red)', marginBottom: 6 }}>🗄</span>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#ffffff' }}>Updating</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Local database</div>
+            </div>
+          </div>
+
+          <button className="btn btn-outline-red" onClick={() => setViewState('normal')}>
+            Cancel Sync
+          </button>
+        </div>
+      )}
+
+      {/* 2. Sync Error State (Desktop - 4) */}
+      {viewState === 'error' && (
+        <div className="empty-state-card" style={{ padding: '70px 24px' }}>
+          <div className="empty-state-icon-box" style={{ background: 'rgba(239, 68, 68, 0.15)', color: 'var(--accent-red)' }}>
+            <AlertTriangle size={36} />
+          </div>
+          <h2 className="empty-state-title">Sync could not be completed</h2>
+          <p className="empty-state-desc">Please check your connection and try again.</p>
+
+          <div
+            style={{
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '16px 22px',
+              maxWidth: 480,
+              width: '100%',
+              marginBottom: 24,
+              textAlign: 'left',
+              display: 'flex',
+              gap: 14
+            }}
+          >
+            <div style={{ color: 'var(--accent-red)', marginTop: 2 }}>
+              <AlertTriangle size={18} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, color: '#ffffff', fontSize: 13.5 }}>Connection error</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2, lineHeight: 1.5 }}>
+                We couldn't connect to your Gmail account. This could be due to a network issue or expired permissions.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button className="btn btn-primary-red" onClick={() => setViewState('normal')}>
+              Try Again
+            </button>
+            <button className="btn btn-outline-red" onClick={() => alert('Diagnostic details: Token valid, network reachable.')}>
+              View Details
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Connect Gmail Onboarding State (Desktop - 18) */}
+      {viewState === 'connect' && (
+        <div className="empty-state-card" style={{ padding: '70px 24px' }}>
+          <div style={{ position: 'relative', width: 90, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+            <div style={{ width: 80, height: 60, borderRadius: 10, border: '2px dashed rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Mail size={32} color="var(--text-muted)" />
+            </div>
+            <div style={{ position: 'absolute', bottom: 4, right: 4, width: 26, height: 26, borderRadius: '50%', background: 'var(--accent-red)', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 16 }}>
+              +
+            </div>
+          </div>
+
+          <h2 className="empty-state-title">Connect your Gmail account</h2>
+          <p className="empty-state-desc">Connect Gmail to begin analyzing your email activity.</p>
+
+          <a href="/api/auth/google" className="btn btn-primary-red btn-lg" style={{ marginBottom: 36 }}>
+            <svg style={{ width: 18, height: 18 }} viewBox="0 0 24 24">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#ffffff"/>
+            </svg>
+            Connect Gmail
+          </a>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 32, maxWidth: 650, width: '100%', textAlign: 'center', borderTop: '1px solid var(--border)', paddingTop: 24 }}>
+            <div>
+              <Lock size={18} color="var(--accent-red)" style={{ margin: '0 auto 6px' }} />
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: '#ffffff' }}>Secure connection</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>with Google</div>
+            </div>
+            <div>
+              <span style={{ fontSize: 18, display: 'block', marginBottom: 6 }}>📊</span>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: '#ffffff' }}>Analyze your</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>email activity</div>
+            </div>
+            <div>
+              <Sparkles size={18} color="var(--accent-red)" style={{ margin: '0 auto 6px' }} />
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: '#ffffff' }}>Get AI-powered</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>insights</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. Inbox Clear Empty State (Desktop - 19) */}
+      {viewState === 'clear' && (
+        <div className="empty-state-card" style={{ padding: '80px 24px' }}>
+          <div className="empty-state-icon-box">
+            <Inbox size={36} />
+          </div>
+          <h2 className="empty-state-title">Your inbox is clear</h2>
+          <p className="empty-state-desc">No messages match your current filters.</p>
+          <button className="btn btn-outline-red" onClick={() => { setViewState('normal'); setFilterTab('all'); setSearchTerm(''); }}>
+            Clear Filters
+          </button>
+        </div>
+      )}
+
+      {/* 5. Main Inbox Table (Desktop - 1 & 11) */}
+      {viewState === 'normal' && (
+        <>
+          <div className="mail-table-container">
+            {/* Table Header Row */}
+            <div
+              className="mail-table-header"
+              style={{ gridTemplateColumns: '32px 28px 28px 28px 40px 180px 1fr 28px 100px 90px 100px' }}
+            >
+              <div onClick={toggleSelectAll} style={{ cursor: 'pointer' }}>
+                {selectedEmails.length === filtered.length && filtered.length > 0 ? (
+                  <CheckSquare size={15} color="var(--accent-red)" />
+                ) : (
+                  <Square size={15} />
+                )}
+              </div>
+              <div /> {/* unread indicator col */}
+              <div /> {/* star col */}
+              <div /> {/* flag col */}
+              <div /> {/* avatar col */}
+              <div>Sender</div>
+              <div>Subject & Preview</div>
+              <div><Paperclip size={13} /></div>
+              <div>Category</div>
+              <div style={{ textAlign: 'right' }}>Date</div>
+              <div style={{ textAlign: 'center' }}>Actions</div>
+            </div>
+
+            {/* Email Rows */}
+            {filtered.map(email => {
+              const isSelected = selectedEmails.includes(email.id)
+
+              return (
+                <div
+                  key={email.id}
+                  className={`mail-row ${!email.isRead ? 'unread' : ''} ${isSelected ? 'selected' : ''}`}
+                  style={{ gridTemplateColumns: '32px 28px 28px 28px 40px 180px 1fr 28px 100px 90px 100px' }}
+                  onClick={() => setActiveDetailEmail(email)}
+                  id={`email-row-${email.id}`}
+                >
+                  {/* Select Checkbox */}
+                  <div onClick={e => toggleSelectOne(email.id, e)} className="row-check">
+                    {isSelected ? (
+                      <CheckSquare size={15} color="var(--accent-red)" />
+                    ) : (
+                      <Square size={15} />
+                    )}
+                  </div>
+
+                  {/* Unread Red Dot */}
+                  <div>
+                    {!email.isRead && <div className="unread-dot-indicator" />}
+                  </div>
+
+                  {/* Star Toggle */}
+                  <div>
+                    <button
+                      className={`icon-toggle ${email.isStarred ? 'starred' : ''}`}
+                      onClick={e => toggleStar(email.id, e)}
+                    >
+                      <Star size={14} fill={email.isStarred ? '#fbbf24' : 'none'} color={email.isStarred ? '#fbbf24' : 'currentColor'} />
+                    </button>
+                  </div>
+
+                  {/* Flag Toggle */}
+                  <div>
+                    <button
+                      className={`icon-toggle ${email.isImportant ? 'flagged' : ''}`}
+                      onClick={e => toggleFlag(email.id, e)}
+                    >
+                      <Flag size={14} fill={email.isImportant ? 'var(--accent-red)' : 'none'} color={email.isImportant ? 'var(--accent-red)' : 'currentColor'} />
+                    </button>
+                  </div>
+
+                  {/* Contact Avatar Circle */}
+                  <div className="contact-avatar">
+                    {email.avatar || email.sender.slice(0, 2).toUpperCase()}
+                  </div>
+
+                  {/* Sender Name & Email */}
+                  <div style={{ minWidth: 0 }}>
+                    <div className="truncate" style={{ fontWeight: !email.isRead ? 700 : 600, color: '#ffffff', fontSize: 13 }}>
+                      {email.sender}
+                    </div>
+                    <div className="truncate" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {email.senderEmail}
+                    </div>
+                  </div>
+
+                  {/* Subject & Preview Snippet */}
+                  <div className="truncate" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                    <span style={{ fontWeight: !email.isRead ? 700 : 600, color: '#ffffff' }}>
+                      {email.subject}
+                    </span>
+                    <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>
+                      {email.snippet}
+                    </span>
+                  </div>
+
+                  {/* Attachment Icon */}
+                  <div>
+                    {email.hasAttachment && <Paperclip size={14} color="var(--text-muted)" />}
+                  </div>
+
+                  {/* Category Badge Pill */}
+                  <div>
+                    <span className={`category-badge ${email.category?.toLowerCase() || 'project'}`}>
+                      {email.category}
+                    </span>
+                  </div>
+
+                  {/* Date */}
+                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)', textAlign: 'right' }}>
+                    {email.date}
+                  </div>
+
+                  {/* AI Review Action Button */}
+                  <div style={{ textAlign: 'center' }}>
+                    <button
+                      className="btn btn-outline-red btn-sm"
+                      style={{ padding: '3px 8px', fontSize: 11 }}
+                      onClick={e => {
+                        e.stopPropagation()
+                        setActiveAiReviewEmail(email)
+                      }}
+                      id={`ai-btn-${email.id}`}
+                    >
+                      <Sparkles size={11} />
+                      AI Review
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* ── Pagination ─────────────────────────────────── */}
+          <div className="pagination-row">
+            <div>
+              1 - {filtered.length} of 1,248 emails
+            </div>
+
+            <div className="pagination-controls">
+              <button
+                className="page-btn"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <button className={`page-btn ${currentPage === 1 ? 'active' : ''}`} onClick={() => setCurrentPage(1)}>1</button>
+              <button className={`page-btn ${currentPage === 2 ? 'active' : ''}`} onClick={() => setCurrentPage(2)}>2</button>
+              <button className={`page-btn ${currentPage === 3 ? 'active' : ''}`} onClick={() => setCurrentPage(3)}>3</button>
+              <span style={{ color: 'var(--text-muted)', padding: '0 4px' }}>...</span>
+              <button className="page-btn" onClick={() => setCurrentPage(50)}>50</button>
+              <button
+                className="page-btn"
+                onClick={() => setCurrentPage(p => Math.min(p + 1, 50))}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── Email Detail Slide-over Drawer (Desktop - 11) ─── */}
+      <EmailDetailDrawer
+        email={activeDetailEmail}
+        isOpen={Boolean(activeDetailEmail)}
+        onClose={() => setActiveDetailEmail(null)}
+        onOpenAIReview={(email) => {
+          setActiveDetailEmail(null)
+          setActiveAiReviewEmail(email)
+        }}
+        onOpenThread={(email) => {
+          setActiveDetailEmail(null)
+          setActiveThreadEmail(email)
+        }}
+      />
+
+      {/* ── AI Review Slide-over Drawer (Desktop - 14) ─────── */}
+      <AIReviewDrawer
+        email={activeAiReviewEmail}
+        isOpen={Boolean(activeAiReviewEmail)}
+        onClose={() => setActiveAiReviewEmail(null)}
+      />
+
+      {/* ── Thread Multi-Message View Modal (Desktop - 15) ── */}
+      <ThreadViewModal
+        email={activeThreadEmail}
+        isOpen={Boolean(activeThreadEmail)}
+        onClose={() => setActiveThreadEmail(null)}
+        onOpenAIReview={(email) => {
+          setActiveThreadEmail(null)
+          setActiveAiReviewEmail(email)
+        }}
+      />
     </div>
   )
 }

@@ -11,6 +11,19 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        cookieDomainRewrite: 'localhost',
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes) => {
+            // Rewrite Set-Cookie so the browser stores it under localhost:5173
+            const cookies = proxyRes.headers['set-cookie']
+            if (cookies) {
+              proxyRes.headers['set-cookie'] = cookies.map(c =>
+                c.replace(/; ?SameSite=None/i, '; SameSite=Lax')
+                 .replace(/; ?Secure/i, '')
+              )
+            }
+          })
+        },
       },
       '/health': {
         target: 'http://localhost:8000',
@@ -19,3 +32,4 @@ export default defineConfig({
     },
   },
 })
+

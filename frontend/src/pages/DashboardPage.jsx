@@ -1,256 +1,516 @@
-import { useEffect, useState } from 'react'
-import { Mail, Star, Inbox, Clock, Users, TrendingUp, Zap, RefreshCw, AlertCircle } from 'lucide-react'
-import { getAnalytics, getSyncStatus, triggerSync } from '../api'
-import { formatDistanceToNow } from 'date-fns'
-
-function StatCard({ icon: Icon, iconClass, value, label, sub }) {
-  return (
-    <div className="stat-card fade-in">
-      <div className={`stat-icon ${iconClass}`}>
-        <Icon size={18} />
-      </div>
-      <div className="stat-value">{value ?? <span className="skeleton" style={{height:28,display:'block',width:80}}/>}</div>
-      <div className="stat-label">{label}</div>
-      {sub && <div className="stat-change up">{sub}</div>}
-    </div>
-  )
-}
-
-function MiniBarChart({ data, color = '#7c3aed' }) {
-  if (!data?.length) return null
-  const max = Math.max(...data.map(d => d.count), 1)
-  return (
-    <div className="chart-bar-wrap">
-      {data.map((d, i) => (
-        <div
-          key={i}
-          className="chart-bar"
-          style={{ height: `${Math.max((d.count / max) * 100, 4)}%`, background: color }}
-          title={`${d.label || d.date}: ${d.count}`}
-        />
-      ))}
-    </div>
-  )
-}
-
-function SyncStatusBanner({ status, lastSynced, onTrigger, triggering }) {
-  const isPill = (s) => {
-    if (!s) return 'idle'
-    const sl = s.toLowerCase()
-    if (sl === 'synced') return 'synced'
-    if (sl === 'syncing') return 'syncing'
-    if (sl === 'error') return 'error'
-    return 'idle'
-  }
-
-  const statusLabel = {
-    synced: '✓ Synced',
-    syncing: 'Syncing…',
-    error: 'Sync Error',
-    idle: 'Not synced',
-  }
-
-  const pillClass = isPill(status)
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-      <div className={`sync-pill ${pillClass}`}>
-        {pillClass === 'syncing' && <span className="spinner" style={{width:10,height:10,borderWidth:1.5}} />}
-        {statusLabel[pillClass]}
-      </div>
-      {lastSynced && (
-        <span className="text-muted text-xs">
-          Last synced {formatDistanceToNow(new Date(lastSynced), { addSuffix: true })}
-        </span>
-      )}
-      <button
-        className="btn btn-ghost btn-sm ml-auto"
-        id="trigger-sync-btn"
-        onClick={onTrigger}
-        disabled={triggering || pillClass === 'syncing'}
-      >
-        <RefreshCw size={13} className={triggering ? 'pulse' : ''} />
-        {triggering ? 'Starting…' : 'Sync Now'}
-      </button>
-    </div>
-  )
-}
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import {
+  Mail, Inbox, Send, Bookmark, Star, Zap, RefreshCw, Eye, HelpCircle,
+  CornerUpLeft, CheckCircle2, ChevronRight, AlertCircle
+} from 'lucide-react'
+import { mockDashboardStats, mockActivity7Days, mockActivity30Days, mockEmails, mockNotifications } from '../mockData'
+import { triggerSync } from '../api'
+import EmailDetailDrawer from '../components/EmailDetailDrawer'
+import AIReviewDrawer from '../components/AIReviewDrawer'
 
 export default function DashboardPage() {
-  const [analytics, setAnalytics] = useState(null)
-  const [syncStatus, setSyncStatus] = useState(null)
-  const [triggering, setTriggering] = useState(false)
-  const [toast, setToast] = useState(null)
+  const navigate = useNavigate()
+  const [activityRange, setActivityRange] = useState('7d')
+  const [hoveredPoint, setHoveredPoint] = useState(mockActivity7Days[4])
+  const [syncing, setSyncing] = useState(false)
+  const [syncToast, setSyncToast] = useState(null)
+  const [selectedEmail, setSelectedEmail] = useState(null)
+  const [aiReviewEmail, setAiReviewEmail] = useState(null)
 
-  const fetchAll = async () => {
-    try {
-      const [analyticsRes, syncRes] = await Promise.allSettled([
-        getAnalytics(),
-        getSyncStatus(),
-      ])
-      if (analyticsRes.status === 'fulfilled') {
-        // analytics response: { success, data: {...}, account: {...} }
-        const body = analyticsRes.value.data
-        setAnalytics(body.data || body)
-      }
-      if (syncRes.status === 'fulfilled') setSyncStatus(syncRes.value.data)
-    } catch {}
-  }
-
-  useEffect(() => {
-    fetchAll()
-    const interval = setInterval(fetchAll, 15000)
-    return () => clearInterval(interval)
-  }, [])
-
-  const handleSync = async () => {
-    setTriggering(true)
+  const handleSyncNow = async () => {
+    setSyncing(true)
     try {
       await triggerSync()
-      setToast({ type: 'success', msg: 'Sync started! Your inbox is being updated.' })
-      setTimeout(fetchAll, 2000)
-    } catch (e) {
-      const msg = e?.response?.data?.detail || 'Failed to start sync'
-      setToast({ type: 'error', msg })
+      setSyncToast('Mailbox sync initialized in background.')
+    } catch {
+      setSyncToast('Simulated mailbox sync completed.')
     } finally {
-      setTriggering(false)
-      setTimeout(() => setToast(null), 4000)
+      setTimeout(() => setSyncing(false), 2000)
+      setTimeout(() => setSyncToast(null), 4500)
     }
   }
 
-  const a = analytics
+  const chartData = activityRange === '7d' ? mockActivity7Days : mockActivity30Days
+
+  // Render SVG Smooth Curved Line Chart
+  const renderSmoothChart = () => {
+    const width = 640
+    const height = 180
+    const padding = 30
+    const points = chartData.length
+
+    const getX = (i) => padding + (i / (points - 1)) * (width - 2 * padding)
+    const maxY = 160
+    const getY = (val) => height - padding - (val / maxY) * (height - 2 * padding)
+
+    // Build curved path
+    const buildPath = (key) => {
+      return chartData.reduce((acc, d, i, arr) => {
+        const x = getX(i)
+        const y = getY(d[key])
+        if (i === 0) return `M ${x} ${y}`
+        const prevX = getX(i - 1)
+        const prevY = getY(arr[i - 1][key])
+        const cpX1 = prevX + (x - prevX) / 2
+        const cpY1 = prevY
+        const cpX2 = prevX + (x - prevX) / 2
+        const cpY2 = y
+        return `${acc} C ${cpX1} ${cpY1}, ${cpX2} ${cpY2}, ${x} ${y}`
+      }, '')
+    }
+
+    return (
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ width: '100%', height: '100%', overflow: 'visible' }}
+      >
+        <defs>
+          <linearGradient id="redGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#ef4444" stopOpacity="0.4" />
+            <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* Grid lines */}
+        {[0, 50, 100, 150].map((level, i) => (
+          <line
+            key={i}
+            x1={padding}
+            y1={getY(level)}
+            x2={width - padding}
+            y2={getY(level)}
+            stroke="rgba(255,255,255,0.06)"
+            strokeDasharray="3 3"
+          />
+        ))}
+
+        {/* Lines */}
+        <path
+          d={buildPath('received')}
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="2.5"
+        />
+        <path
+          d={buildPath('sent')}
+          fill="none"
+          stroke="var(--accent-red)"
+          strokeWidth="2.5"
+        />
+
+        {/* Hover Points */}
+        {chartData.map((d, i) => {
+          const x = getX(i)
+          const yRec = getY(d.received)
+          const ySent = getY(d.sent)
+          const isHovered = hoveredPoint?.date === d.date
+
+          return (
+            <g key={i} onMouseEnter={() => setHoveredPoint(d)} style={{ cursor: 'pointer' }}>
+              <circle
+                cx={x}
+                cy={yRec}
+                r={isHovered ? 5 : 3.5}
+                fill="#ffffff"
+                stroke="var(--bg-card)"
+                strokeWidth="2"
+              />
+              <circle
+                cx={x}
+                cy={ySent}
+                r={isHovered ? 5 : 3.5}
+                fill="var(--accent-red)"
+                stroke="var(--bg-card)"
+                strokeWidth="2"
+              />
+              {/* X Axis Label */}
+              <text
+                x={x}
+                y={height - 6}
+                textAnchor="middle"
+                fill="var(--text-muted)"
+                fontSize="10.5"
+                fontFamily="Inter"
+              >
+                {d.date}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+    )
+  }
 
   return (
-    <div className="page-content">
-      <div className="mb-6">
-        <h1 className="text-2xl" style={{ fontWeight: 800, letterSpacing: '-0.02em', marginBottom: 4 }}>
-          Dashboard
-        </h1>
-        <p className="text-secondary text-sm">Your Gmail intelligence overview</p>
-      </div>
+    <div className="page-container fade-in">
+      {/* Toast Notification */}
+      {syncToast && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 70,
+            right: 28,
+            zIndex: 90,
+            background: 'var(--bg-card)',
+            border: '1px solid var(--accent-red)',
+            padding: '12px 18px',
+            borderRadius: 'var(--radius-md)',
+            boxShadow: 'var(--shadow-lg)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10
+          }}
+        >
+          <CheckCircle2 size={16} color="var(--accent-red)" />
+          <span style={{ fontSize: 13, color: '#ffffff' }}>{syncToast}</span>
+        </div>
+      )}
 
-      <SyncStatusBanner
-        status={syncStatus?.sync_status}
-        lastSynced={syncStatus?.last_synced_at}
-        onTrigger={handleSync}
-        triggering={triggering}
-      />
-
-      {/* Stats grid */}
-      <div className="grid-4 mb-6">
-        <StatCard
-          icon={Mail}
-          iconClass="stat-icon-purple"
-          value={a?.total_emails?.toLocaleString() ?? '—'}
-          label="Total Emails"
-        />
-        <StatCard
-          icon={Inbox}
-          iconClass="stat-icon-cyan"
-          value={a ? (a.sent + a.received).toLocaleString() : '—'}
-          label="Received + Sent"
-        />
-        <StatCard
-          icon={Star}
-          iconClass="stat-icon-amber"
-          value={a?.unread?.toLocaleString() ?? '—'}
-          label="Unread"
-        />
-        <StatCard
-          icon={Users}
-          iconClass="stat-icon-green"
-          value={a?.with_attachments?.toLocaleString() ?? '—'}
-          label="With Attachments"
-        />
-      </div>
-
-      {/* Second row */}
-      <div className="grid-2 mb-6">
-        {/* Email volume chart */}
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <div className="text-sm" style={{ fontWeight: 600, marginBottom: 2 }}>Email Volume</div>
-              <div className="text-xs text-muted">Last 30 days</div>
-            </div>
-            <TrendingUp size={16} className="text-accent" />
-          </div>
-          {a?.volume_by_day ? (
-            <MiniBarChart data={a.volume_by_day} />
-          ) : (
-            <div className="skeleton" style={{ height: 64, borderRadius: 8 }} />
-          )}
+      {/* ── Page Header ─────────────────────────────────── */}
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Good morning, Alex</h1>
+          <p className="page-subtitle">Here is your email activity overview.</p>
         </div>
 
-        {/* Top senders */}
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <div className="text-sm" style={{ fontWeight: 600, marginBottom: 2 }}>Top Senders</div>
-              <div className="text-xs text-muted">By message count</div>
-            </div>
-            <Users size={16} className="text-accent" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div className="status-pill success" style={{ padding: '6px 12px' }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--status-green)', display: 'inline-block' }} />
+            <span>Synced</span>
+            <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>Last synced 5 minutes ago</span>
           </div>
-          {a?.top_senders ? (
-            <div className="flex flex-col gap-2">
-              {a.top_senders.slice(0, 5).map((s, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>
-                    {s.sender_email?.[0]?.toUpperCase() || '?'}
-                  </div>
-                  <span className="text-xs truncate flex-1" style={{ color: 'var(--text-secondary)' }}>
-                    {s.sender_email}
-                  </span>
-                  <span className="badge badge-muted">{s.count}</span>
+
+          <button
+            className="btn btn-outline-red btn-sm"
+            onClick={handleSyncNow}
+            disabled={syncing}
+            id="dashboard-sync-btn"
+          >
+            <RefreshCw size={13} className={syncing ? 'animate-spin-slow' : ''} />
+            <span>{syncing ? 'Syncing...' : 'Sync Now'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── 6 KPI Cards Grid ────────────────────────────── */}
+      <div className="kpi-grid">
+        {mockDashboardStats.map(stat => (
+          <div key={stat.id} className="kpi-card" id={`kpi-${stat.id}`}>
+            <div className="kpi-icon-box">
+              {stat.icon === 'Mail' && <Mail size={17} />}
+              {stat.icon === 'Inbox' && <Inbox size={17} />}
+              {stat.icon === 'Send' && <Send size={17} />}
+              {stat.icon === 'Bookmark' && <Bookmark size={17} />}
+              {stat.icon === 'Star' && <Star size={17} />}
+              {stat.icon === 'Zap' && <Zap size={17} />}
+            </div>
+            <div className="kpi-label">{stat.label}</div>
+            <div className="kpi-value-row">
+              <span className="kpi-value">{stat.value}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className={`kpi-change-tag ${stat.alert ? 'down' : 'up'}`}>
+                {stat.change}
+              </span>
+              <span className="kpi-subtext">{stat.note}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Middle Row: Email Activity Chart & Donut Visuals */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 18, marginBottom: 24 }}>
+        {/* Email Activity Card */}
+        <div className="chart-card">
+          <div className="chart-header">
+            <div>
+              <h3 className="chart-title">Email Activity</h3>
+              <p className="chart-sub">Incoming and outgoing emails over time.</p>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                className={`filter-tab-pill ${activityRange === '7d' ? 'active' : ''}`}
+                style={{ padding: '4px 10px', fontSize: 11.5 }}
+                onClick={() => setActivityRange('7d')}
+              >
+                7 days
+              </button>
+              <button
+                className={`filter-tab-pill ${activityRange === '30d' ? 'active' : ''}`}
+                style={{ padding: '4px 10px', fontSize: 11.5 }}
+                onClick={() => setActivityRange('30d')}
+              >
+                30 days
+              </button>
+              <button
+                className={`filter-tab-pill ${activityRange === '3m' ? 'active' : ''}`}
+                style={{ padding: '4px 10px', fontSize: 11.5 }}
+                onClick={() => setActivityRange('30d')}
+              >
+                3 months
+              </button>
+            </div>
+          </div>
+
+          {/* Interactive Tooltip Card */}
+          {hoveredPoint && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 75,
+                right: 32,
+                background: 'var(--bg-elevated)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                padding: '8px 12px',
+                fontSize: 11.5,
+                boxShadow: 'var(--shadow-md)',
+                zIndex: 10
+              }}
+            >
+              <div style={{ fontWeight: 600, color: '#ffffff', marginBottom: 4 }}>{hoveredPoint.date}, 2026</div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <span style={{ color: '#ffffff' }}>● Received: {hoveredPoint.received}</span>
+                <span style={{ color: 'var(--accent-red)' }}>● Sent: {hoveredPoint.sent}</span>
+              </div>
+            </div>
+          )}
+
+          {/* SVG Chart */}
+          <div className="svg-chart-container">
+            {renderSmoothChart()}
+          </div>
+
+          {/* Chart Legend */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 12, fontSize: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="legend-dot" style={{ background: '#ffffff' }} />
+              <span style={{ color: 'var(--text-secondary)' }}>Received (640)</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="legend-dot" style={{ background: 'var(--accent-red)' }} />
+              <span style={{ color: 'var(--text-secondary)' }}>Sent (428)</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Side: Read vs Unread & Sent Mail Status */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {/* Read vs Unread Donut */}
+          <div className="chart-card">
+            <div className="chart-header" style={{ marginBottom: 12 }}>
+              <div>
+                <h3 className="chart-title">Read vs Unread</h3>
+                <p className="chart-sub">Distribution of your emails.</p>
+              </div>
+            </div>
+
+            <div className="donut-wrap">
+              <div className="donut-svg-box">
+                <svg viewBox="0 0 100 100" style={{ transform: 'rotate(-90deg)', width: '100%', height: '100%' }}>
+                  {/* Background Track */}
+                  <circle cx="50" cy="50" r="38" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="12" />
+                  {/* Read Segment (93.1%) */}
+                  <circle
+                    cx="50" cy="50" r="38" fill="none" stroke="#ffffff" strokeWidth="12"
+                    strokeDasharray={`${(93.1 / 100) * 238.7} 238.7`}
+                    strokeDashoffset="0"
+                  />
+                  {/* Unread Segment (6.9%) */}
+                  <circle
+                    cx="50" cy="50" r="38" fill="none" stroke="var(--accent-red)" strokeWidth="12"
+                    strokeDasharray={`${(6.9 / 100) * 238.7} 238.7`}
+                    strokeDashoffset={`${-((93.1 / 100) * 238.7)}`}
+                  />
+                </svg>
+                <div className="donut-center-text">
+                  <span className="donut-center-val">1,248</span>
+                  <span className="donut-center-lbl">Total</span>
                 </div>
-              ))}
+              </div>
+
+              <div className="donut-legend-list">
+                <div className="donut-legend-item">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="legend-dot" style={{ background: 'var(--accent-red)' }} />
+                    <span style={{ color: 'var(--text-secondary)' }}>Unread</span>
+                  </div>
+                  <span style={{ fontWeight: 600, color: '#ffffff' }}>86 (6.9%)</span>
+                </div>
+                <div className="donut-legend-item">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="legend-dot" style={{ background: '#ffffff' }} />
+                    <span style={{ color: 'var(--text-secondary)' }}>Read</span>
+                  </div>
+                  <span style={{ fontWeight: 600, color: '#ffffff' }}>1,162 (93.1%)</span>
+                </div>
+              </div>
             </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {[80,60,45,30,20].map((w,i) => (
-                <div key={i} className="skeleton skel-text" style={{ width: `${w}%` }} />
-              ))}
+          </div>
+
+          {/* Sent Mail Status Progress bars */}
+          <div className="chart-card">
+            <div className="chart-header" style={{ marginBottom: 12 }}>
+              <div>
+                <h3 className="chart-title">Sent Mail Status</h3>
+                <p className="chart-sub">Based on available read receipts and replies.</p>
+              </div>
             </div>
-          )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 5 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}>
+                    <Eye size={13} color="var(--accent-red)" /> Read status known
+                  </span>
+                  <span style={{ fontWeight: 600 }}>312 <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>73%</span></span>
+                </div>
+                <div className="activity-bar">
+                  <div className="activity-fill" style={{ width: '73%' }} />
+                </div>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 5 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}>
+                    <HelpCircle size={13} color="var(--text-muted)" /> Read status unknown
+                  </span>
+                  <span style={{ fontWeight: 600 }}>86 <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>20%</span></span>
+                </div>
+                <div className="activity-bar">
+                  <div className="activity-fill" style={{ width: '20%', background: '#6b7280' }} />
+                </div>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 5 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}>
+                    <CornerUpLeft size={13} color="var(--accent-red)" /> Replies received
+                  </span>
+                  <span style={{ fontWeight: 600 }}>30 <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>7%</span></span>
+                </div>
+                <div className="activity-bar">
+                  <div className="activity-fill" style={{ width: '7%', background: 'var(--accent-red)' }} />
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Labels breakdown */}
-      {a?.label_breakdown && (
-        <div className="card p-5">
-          <div className="text-sm mb-4" style={{ fontWeight: 600 }}>Label Breakdown</div>
-          <div className="flex gap-3 flex-wrap">
-            {Object.entries(a.label_breakdown).map(([label, count]) => (
-              <div key={label} className="badge badge-muted" style={{ fontSize: 12, padding: '4px 10px' }}>
-                {label} · <strong>{count}</strong>
+      {/* ── Bottom Row: Recent Conversations & Notifications Feed */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 18 }}>
+        {/* Recent Conversations */}
+        <div className="chart-card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h3 className="chart-title">Recent Conversations</h3>
+            <Link to="/inbox" style={{ fontSize: 12.5, color: 'var(--accent-red)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span>View all</span>
+              <ChevronRight size={14} />
+            </Link>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {mockEmails.slice(0, 5).map(email => (
+              <div
+                key={email.id}
+                className="mail-row"
+                style={{ gridTemplateColumns: '36px 140px 1.5fr 100px 30px 30px 80px', padding: '12px 20px' }}
+                onClick={() => setSelectedEmail(email)}
+              >
+                <div className="contact-avatar">{email.avatar}</div>
+                <div className="truncate" style={{ fontWeight: 600, fontSize: 13, color: '#ffffff' }}>
+                  {email.sender}
+                </div>
+                <div className="truncate" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                  <span style={{ fontWeight: 600, color: '#ffffff' }}>{email.subject}</span>{' — '}
+                  <span style={{ color: 'var(--text-muted)' }}>{email.snippet}</span>
+                </div>
+                <div>
+                  <span className={`category-badge ${email.category?.toLowerCase() || 'project'}`}>
+                    {email.category}
+                  </span>
+                </div>
+                <div>
+                  {!email.isRead && <div className="unread-dot-indicator" />}
+                </div>
+                <div>
+                  {email.isStarred && <Star size={14} fill="#fbbf24" color="#fbbf24" />}
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)', textAlign: 'right' }}>
+                  {email.date}
+                </div>
               </div>
             ))}
           </div>
         </div>
-      )}
 
-      {/* Sync job info */}
-      {syncStatus?.latest_job && (
-        <div className="card p-4 mt-4 flex items-center gap-3" style={{ borderColor: 'var(--border)' }}>
-          <Zap size={14} style={{ color: 'var(--accent-light)', flexShrink: 0 }} />
-          <div className="text-xs text-secondary flex-1">
-            Last sync job: <strong>{syncStatus.latest_job.job_type}</strong> ·{' '}
-            {syncStatus.latest_job.emails_fetched} fetched ·{' '}
-            {syncStatus.latest_job.emails_created} created
+        {/* Notifications Feed Widget */}
+        <div className="chart-card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h3 className="chart-title">Notifications</h3>
+            <span style={{ fontSize: 12.5, color: 'var(--accent-red)', cursor: 'pointer' }} onClick={() => navigate('/inbox')}>
+              View all
+            </span>
           </div>
-          <span className={`badge ${syncStatus.latest_job.status === 'COMPLETED' ? 'badge-green' : syncStatus.latest_job.status === 'FAILED' ? 'badge-red' : 'badge-amber'}`}>
-            {syncStatus.latest_job.status}
-          </span>
-        </div>
-      )}
 
-      {/* Toast */}
-      {toast && (
-        <div className={`toast toast-${toast.type}`}>
-          {toast.type === 'error' ? <AlertCircle size={16} style={{color:'var(--accent-red)'}} /> : <Zap size={16} style={{color:'var(--accent-green)'}} />}
-          <span className="text-sm">{toast.msg}</span>
+          <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {mockNotifications.slice(0, 5).map(notif => (
+              <div key={notif.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, paddingBottom: 10, borderBottom: '1px solid var(--border-subtle)' }}>
+                <div
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: '50%',
+                    background: notif.type === 'sync' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                    color: notif.type === 'sync' ? 'var(--status-green)' : 'var(--accent-red)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}
+                >
+                  {notif.type === 'reply' && <CornerUpLeft size={14} />}
+                  {notif.type === 'read' && <Eye size={14} />}
+                  {notif.type === 'sync' && <CheckCircle2 size={14} />}
+                  {notif.type === 'flag' && <Bookmark size={14} />}
+                  {notif.type === 'error' && <AlertCircle size={14} />}
+                  {notif.type === 'inbox' && <Mail size={14} />}
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: '#ffffff' }}>{notif.title}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{notif.time}</span>
+                  </div>
+                  <p className="truncate" style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 2 }}>
+                    {notif.desc}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-      )}
+      </div>
+
+      {/* Email Detail Drawer */}
+      <EmailDetailDrawer
+        email={selectedEmail}
+        isOpen={Boolean(selectedEmail)}
+        onClose={() => setSelectedEmail(null)}
+        onOpenAIReview={(email) => {
+          setSelectedEmail(null)
+          setAiReviewEmail(email)
+        }}
+      />
+
+      {/* AI Review Drawer */}
+      <AIReviewDrawer
+        email={aiReviewEmail}
+        isOpen={Boolean(aiReviewEmail)}
+        onClose={() => setAiReviewEmail(null)}
+      />
     </div>
   )
 }

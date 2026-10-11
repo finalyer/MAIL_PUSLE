@@ -1,172 +1,308 @@
 import { useState, useEffect } from 'react'
-import { getSyncJobs, getSyncStatus, triggerSync } from '../api'
-import { RefreshCw, CheckCircle, XCircle, Clock, Zap, AlertCircle } from 'lucide-react'
-import { formatDistanceToNow, format } from 'date-fns'
-
-const STATUS_CONFIG = {
-  COMPLETED: { cls: 'badge-green',  icon: CheckCircle, color: 'var(--accent-green)' },
-  FAILED:    { cls: 'badge-red',    icon: XCircle,     color: 'var(--accent-red)'   },
-  RUNNING:   { cls: 'badge-amber',  icon: RefreshCw,   color: 'var(--accent-3)'     },
-  PENDING:   { cls: 'badge-muted',  icon: Clock,       color: 'var(--text-muted)'   },
-}
-
-function JobRow({ job }) {
-  const cfg = STATUS_CONFIG[job.status] || STATUS_CONFIG.PENDING
-  const Icon = cfg.icon
-  const duration = job.started_at && job.completed_at
-    ? ((new Date(job.completed_at) - new Date(job.started_at)) / 1000).toFixed(1) + 's'
-    : null
-  return (
-    <div style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:16, alignItems:'center', padding:'14px 20px', borderBottom:'1px solid var(--border)' }}>
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <Icon size={13} style={{ color: cfg.color, flexShrink: 0 }} />
-          <span style={{ fontSize:13, fontWeight:600 }}>{job.job_type.replace('_', ' ')}</span>
-          <span className={`badge ${cfg.cls}`}>{job.status}</span>
-        </div>
-        <div className="text-xs text-muted">
-          {format(new Date(job.created_at), 'MMM d, yyyy · h:mm:ss a')}
-          {duration && ` · ${duration}`}
-        </div>
-        {job.error_message && (
-          <div className="text-xs" style={{ color:'var(--accent-red)', marginTop:4 }}>
-            {job.error_message}
-          </div>
-        )}
-      </div>
-      <div style={{ textAlign:'center' }}>
-        <div style={{ fontSize:20, fontWeight:800 }}>{job.emails_fetched}</div>
-        <div className="text-xs text-muted">fetched</div>
-      </div>
-      <div style={{ textAlign:'center' }}>
-        <div style={{ fontSize:20, fontWeight:800, color:'var(--accent-green)' }}>{job.emails_created}</div>
-        <div className="text-xs text-muted">new</div>
-      </div>
-    </div>
-  )
-}
+import {
+  RefreshCw, Shield, Lock, Database, EyeOff, CheckCircle2,
+  MoreVertical
+} from 'lucide-react'
+import { mockSyncHistory } from '../mockData'
+import { getSyncStatus, triggerSync } from '../api'
 
 export default function SyncPage() {
-  const [jobs, setJobs] = useState([])
-  const [status, setStatus] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [syncHistory, setSyncHistory] = useState(mockSyncHistory)
+  const [isSyncActive, setIsSyncActive] = useState(true)
+  const [progress, setProgress] = useState(64)
   const [triggering, setTriggering] = useState(false)
-  const [toast, setToast] = useState(null)
 
-  const fetchAll = async () => {
-    try {
-      const [jobsRes, statusRes] = await Promise.allSettled([getSyncJobs(), getSyncStatus()])
-      if (jobsRes.status === 'fulfilled') setJobs(jobsRes.value.data || [])
-      if (statusRes.status === 'fulfilled') setStatus(statusRes.value.data)
-    } finally { setLoading(false) }
-  }
-
+  // Fetch real sync status if backend available
   useEffect(() => {
-    fetchAll()
-    const iv = setInterval(fetchAll, 10000)
-    return () => clearInterval(iv)
+    getSyncStatus()
+      .then(res => {
+        if (res.data?.status === 'syncing') {
+          setIsSyncActive(true)
+        }
+      })
+      .catch(() => {})
   }, [])
 
-  const handleTrigger = async () => {
+  const handleTriggerSync = async () => {
     setTriggering(true)
     try {
       await triggerSync()
-      setToast({ type: 'success', msg: 'Sync started!' })
-      setTimeout(fetchAll, 1500)
-    } catch (e) {
-      setToast({ type: 'error', msg: e?.response?.data?.detail || 'Sync failed to start' })
-    } finally {
-      setTriggering(false)
-      setTimeout(() => setToast(null), 4000)
-    }
+    } catch {}
+    setIsSyncActive(true)
+    setProgress(15)
+    setTimeout(() => setProgress(64), 1000)
+    setTriggering(false)
   }
 
-  const isSyncing = status?.sync_status === 'SYNCING' || jobs[0]?.status === 'RUNNING'
+  const handleCancelSync = () => {
+    setIsSyncActive(false)
+  }
 
   return (
-    <div className="page-content">
-      <div className="flex items-center justify-between mb-6">
+    <div className="page-container fade-in">
+      {/* ── Page Header ─────────────────────────────────── */}
+      <div className="page-header">
         <div>
-          <h1 className="text-2xl" style={{ fontWeight:800, letterSpacing:'-0.02em', marginBottom:4 }}>
-            Sync Center
-          </h1>
-          <p className="text-secondary text-sm">Manage and monitor your Gmail sync jobs</p>
+          <h1 className="page-title">Gmail Sync</h1>
+          <p className="page-subtitle">Manage your Gmail connection and email data synchronization.</p>
         </div>
-        <button
-          className="btn btn-primary"
-          id="sync-trigger-btn"
-          onClick={handleTrigger}
-          disabled={triggering || isSyncing}
-        >
-          <RefreshCw size={14} className={isSyncing ? 'pulse' : ''} />
-          {isSyncing ? 'Syncing…' : 'Trigger Sync'}
-        </button>
+
+        <div>
+          <button
+            className="btn btn-primary-red"
+            onClick={handleTriggerSync}
+            disabled={triggering || isSyncActive}
+          >
+            <RefreshCw size={14} className={triggering ? 'animate-spin-slow' : ''} />
+            <span>{isSyncActive ? 'Sync in progress' : 'Trigger New Sync'}</span>
+          </button>
+        </div>
       </div>
 
-      {/* Status card */}
-      {status && (
-        <div className="card p-5 mb-6">
-          <div className="grid-3" style={{ gap:24 }}>
-            <div>
-              <div className="text-xs text-muted mb-1">Current Status</div>
-              <div className={`sync-pill ${
-                status.sync_status === 'SYNCED' ? 'synced' :
-                status.sync_status === 'SYNCING' ? 'syncing' :
-                status.sync_status === 'ERROR' ? 'error' : 'idle'
-              }`} style={{ display:'inline-flex' }}>
-                {isSyncing && <span className="spinner" style={{width:10,height:10,borderWidth:1.5}} />}
-                {status.sync_status || 'Unknown'}
+      {/* ── Top Row: Account Connection Card & Security Assurance Card */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 18, marginBottom: 24 }}>
+        {/* Left Column: Connected Account & Active Sync */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {/* Account Status Card */}
+          <div className="chart-card">
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                {/* Gmail Icon Box */}
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  <svg style={{ width: 22, height: 22 }} viewBox="0 0 24 24">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                  </svg>
+                </div>
+
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 16, fontWeight: 700, color: '#ffffff' }}>alex@example.com</span>
+                    <span className="status-pill success">● Synced</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Connected via Gmail</div>
+                </div>
+              </div>
+
+              <button className="icon-toggle" title="Options">
+                <MoreVertical size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr', gap: 12, borderTop: '1px solid var(--border-subtle)', paddingTop: 14 }}>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: '#ffffff' }}>1,248</div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Emails stored</div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: '#ffffff' }}>312</div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Threads stored</div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Last synced</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#ffffff', marginTop: 2 }}>October 6, 2026 at 10:42 AM</div>
               </div>
             </div>
-            <div>
-              <div className="text-xs text-muted mb-1">Gmail Account</div>
-              <div style={{ fontSize:13, fontWeight:600 }}>{status.gmail_email || '—'}</div>
+          </div>
+
+          {/* Active Live Sync Progress Card */}
+          {isSyncActive && (
+            <div className="chart-card">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: '#ffffff' }}>Syncing your Gmail account...</h3>
+                <button className="btn btn-outline-red btn-sm" onClick={handleCancelSync}>
+                  Cancel Sync
+                </button>
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+                Please keep this window open while we sync your emails.
+              </p>
+
+              {/* Red glowing progress bar */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+                <div style={{ flex: 1, height: 7, background: 'rgba(255,255,255,0.08)', borderRadius: 99, overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${progress}%`,
+                      background: 'var(--accent-red)',
+                      boxShadow: '0 0 12px var(--accent-red-glow)',
+                      borderRadius: 99,
+                      transition: 'width 300ms ease'
+                    }}
+                  />
+                </div>
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#ffffff', minWidth: 40, textAlign: 'right' }}>
+                  {progress}%
+                </span>
+              </div>
+
+              {/* 4 Sub-stat Boxes */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+                <div style={{ background: 'var(--bg-surface)', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#ffffff' }}>84 / 150</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Threads processed</div>
+                </div>
+
+                <div style={{ background: 'var(--bg-surface)', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#ffffff' }}>1,203</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Emails created</div>
+                </div>
+
+                <div style={{ background: 'var(--bg-surface)', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#ffffff' }}>42</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Emails updated</div>
+                </div>
+
+                <div style={{ background: 'var(--bg-surface)', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#ffffff' }}>~ 2 min</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Estimated time left</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right Column: Security Guarantees Card */}
+        <div className="chart-card" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div className="kpi-icon-box" style={{ width: 34, height: 34, margin: 0 }}>
+              <Shield size={16} />
             </div>
             <div>
-              <div className="text-xs text-muted mb-1">Last Synced</div>
-              <div style={{ fontSize:13, fontWeight:600 }}>
-                {status.last_synced_at
-                  ? formatDistanceToNow(new Date(status.last_synced_at), { addSuffix: true })
-                  : 'Never'}
+              <div style={{ fontWeight: 600, fontSize: 13.5, color: '#ffffff' }}>Your data is secure</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.5 }}>
+                We take your privacy seriously. Your Gmail data is only used to provide analytics and insights.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div className="kpi-icon-box" style={{ width: 34, height: 34, margin: 0 }}>
+              <Lock size={16} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13.5, color: '#ffffff' }}>Read-only Gmail access</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.5 }}>
+                We only read your emails, never modify or delete.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div className="kpi-icon-box" style={{ width: 34, height: 34, margin: 0 }}>
+              <Database size={16} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13.5, color: '#ffffff' }}>Encrypted token storage</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.5 }}>
+                Your OAuth tokens are securely encrypted.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div className="kpi-icon-box" style={{ width: 34, height: 34, margin: 0 }}>
+              <EyeOff size={16} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13.5, color: '#ffffff' }}>No email sending on your behalf</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.5 }}>
+                We never send emails from your account.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div className="kpi-icon-box" style={{ width: 34, height: 34, margin: 0 }}>
+              <CheckCircle2 size={16} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13.5, color: '#ffffff' }}>Disconnect anytime</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.5 }}>
+                You can revoke access at any time from settings or your Google account.
               </div>
             </div>
           </div>
         </div>
-      )}
-
-      {/* Jobs list */}
-      <div className="card">
-        <div style={{ padding:'16px 20px', borderBottom:'1px solid var(--border)' }}>
-          <div className="flex items-center gap-2">
-            <Zap size={14} style={{ color:'var(--accent-light)' }} />
-            <span style={{ fontWeight:600, fontSize:14 }}>Sync History</span>
-            <span className="badge badge-muted ml-auto">{jobs.length} jobs</span>
-          </div>
-        </div>
-
-        {loading ? (
-          <div style={{ padding:20 }}>
-            {[...Array(4)].map((_,i) => (
-              <div key={i} className="skeleton" style={{ height:70, marginBottom:8, borderRadius:8 }} />
-            ))}
-          </div>
-        ) : jobs.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon"><Clock size={24} /></div>
-            <div>No sync jobs yet</div>
-            <div className="text-xs text-muted">Trigger your first sync to get started</div>
-          </div>
-        ) : (
-          jobs.map(j => <JobRow key={j.id} job={j} />)
-        )}
       </div>
 
-      {toast && (
-        <div className={`toast toast-${toast.type}`}>
-          {toast.type === 'error' ? <AlertCircle size={16} style={{color:'var(--accent-red)'}} /> : <CheckCircle size={16} style={{color:'var(--accent-green)'}} />}
-          <span className="text-sm">{toast.msg}</span>
+      {/* ── Bottom Section: Sync History Table ──────────── */}
+      <div className="chart-card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)' }}>
+          <h3 className="chart-title">Sync History</h3>
+          <p className="chart-sub">View your recent synchronization activity.</p>
         </div>
-      )}
+
+        <div className="mail-table-header" style={{ gridTemplateColumns: '1.4fr 120px 1.2fr 130px 120px 40px', background: 'transparent' }}>
+          <div>Sync type</div>
+          <div>Status</div>
+          <div>Started</div>
+          <div>Emails processed</div>
+          <div>Duration</div>
+          <div>Actions</div>
+        </div>
+
+        {syncHistory.map(item => (
+          <div
+            key={item.id}
+            className="mail-row"
+            style={{ gridTemplateColumns: '1.4fr 120px 1.2fr 130px 120px 40px', padding: '14px 22px' }}
+          >
+            <div>
+              <div style={{ fontWeight: 600, color: '#ffffff', fontSize: 13 }}>{item.type}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{item.subType}</div>
+            </div>
+
+            <div>
+              <span
+                className={`status-pill ${
+                  item.status === 'Completed'
+                    ? 'success'
+                    : item.status === 'Partial'
+                    ? 'warning'
+                    : 'danger'
+                }`}
+              >
+                ● {item.status}
+              </span>
+            </div>
+
+            <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+              {item.started}
+            </div>
+
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#ffffff' }}>
+              {item.emailsProcessed}
+            </div>
+
+            <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+              {item.duration}
+            </div>
+
+            <div>
+              <button className="icon-toggle" title="More">
+                <MoreVertical size={14} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
