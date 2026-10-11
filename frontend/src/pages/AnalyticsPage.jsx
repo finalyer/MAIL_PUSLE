@@ -1,12 +1,35 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Mail, Send, CornerUpLeft, Clock, Star, Zap, Download, ChevronDown,
   TrendingUp, Calendar, AlertCircle, Sparkles
 } from 'lucide-react'
 import { mockAnalyticsKPIs, mockActivity30Days } from '../mockData'
+import { getAnalytics } from '../api'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function AnalyticsPage() {
+  const { user, isDemoUser } = useAuth()
   const [timeRange, setTimeRange] = useState('Last 30 days')
+  const [realAnalytics, setRealAnalytics] = useState(null)
+
+  useEffect(() => {
+    if (user && !isDemoUser) {
+      getAnalytics()
+        .then(res => {
+          if (res.data?.success) setRealAnalytics(res.data.data)
+        })
+        .catch(err => console.warn('Could not load analytics:', err))
+    }
+  }, [user, isDemoUser])
+
+  const kpis = realAnalytics ? [
+    { label: 'Total Received', value: (realAnalytics.received ?? (realAnalytics.total_emails - (realAnalytics.sent || 0))).toLocaleString(), change: 'Live', note: 'synced emails', icon: 'Mail', isUp: true },
+    { label: 'Total Sent', value: (realAnalytics.sent ?? 0).toLocaleString(), change: 'Outbox', note: 'sent messages', icon: 'Send', isUp: true },
+    { label: 'Unread Rate', value: `${Math.round(((realAnalytics.unread || 0) / (realAnalytics.total_emails || 1)) * 100)}%`, change: `${realAnalytics.unread} unread`, note: 'pending review', icon: 'Clock', isUp: false },
+    { label: 'Starred & Key', value: (realAnalytics.starred ?? 0).toLocaleString(), change: 'Priority', note: 'flagged messages', icon: 'Star', isUp: true },
+    { label: 'With Attachments', value: (realAnalytics.with_attachments ?? 0).toLocaleString(), change: 'Documents', note: 'contain files', icon: 'CornerUpLeft', isUp: true },
+    { label: 'Total Processed', value: (realAnalytics.total_emails ?? 0).toLocaleString(), change: 'Indexed', note: 'in database', icon: 'Zap', isUp: true },
+  ] : mockAnalyticsKPIs
 
   return (
     <div className="page-container fade-in">
@@ -36,7 +59,7 @@ export default function AnalyticsPage() {
 
       {/* ── 6 KPI Cards ─────────────────────────────────── */}
       <div className="kpi-grid">
-        {mockAnalyticsKPIs.map((kpi, idx) => (
+        {kpis.map((kpi, idx) => (
           <div key={idx} className="kpi-card" id={`analytics-kpi-${idx}`}>
             <div className="kpi-icon-box">
               {kpi.icon === 'Mail' && <Mail size={16} />}

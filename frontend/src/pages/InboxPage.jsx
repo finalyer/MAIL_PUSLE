@@ -1,24 +1,127 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Search, Star, Flag, Paperclip, Sparkles, Filter, MoreHorizontal,
   ChevronLeft, ChevronRight, CheckSquare, Square, RefreshCw, AlertTriangle,
-  Mail, Inbox, Lock
+  Mail, Inbox, Lock, Loader2
 } from 'lucide-react'
 import { mockEmails } from '../mockData'
+import { getEmails, getEmail, getThread, triggerSync } from '../api'
+import { formatEmailForUI } from '../utils/emailAdapter'
+import { useAuth } from '../contexts/AuthContext'
 import EmailDetailDrawer from '../components/EmailDetailDrawer'
 import AIReviewDrawer from '../components/AIReviewDrawer'
 import ThreadViewModal from '../components/ThreadViewModal'
 
 export default function InboxPage() {
+  const { user, isDemoUser } = useAuth()
   const [filterTab, setFilterTab] = useState('all') // 'all' | 'unread' | 'starred' | 'important'
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedEmails, setSelectedEmails] = useState([])
   const [activeDetailEmail, setActiveDetailEmail] = useState(null)
   const [activeAiReviewEmail, setActiveAiReviewEmail] = useState(null)
   const [activeThreadEmail, setActiveThreadEmail] = useState(null)
-  const [emails, setEmails] = useState(mockEmails)
+  const [emails, setEmails] = useState([])
+  const [totalEmailsCount, setTotalEmailsCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [viewState, setViewState] = useState('normal') // 'normal' | 'syncing' | 'error' | 'connect' | 'clear'
   const [currentPage, setCurrentPage] = useState(1)
+
+  // Fetch emails from API
+  const loadEmails = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setIsRefreshing(true)
+    else setIsLoading(true)
+
+    try {
+      if (user && !isDemoUser) {
+        const { data } = await getEmails({ page: currentPage, page_size: 50 })
+        if (data && data.items && data.items.length > 0) {
+          const formatted = data.items.map(item => formatEmailForUI(item, user?.email))
+          setEmails(formatted)
+          setTotalEmailsCount(data.total || formatted.length)
+          setTotalPages(data.pages || Math.ceil((data.total || formatted.length) / 50) || 1)
+        } else {
+          // If no emails yet in DB
+          if (data && data.total === 0) {
+            setEmails([])
+            setTotalEmailsCount(0)
+            setViewState('clear')
+          } else {
+            setEmails(mockEmails)
+            setTotalEmailsCount(mockEmails.length)
+          }
+        }
+      } else {
+        // Demo or guest mode
+        setEmails(mockEmails)
+        setTotalEmailsCount(mockEmails.length)
+      }
+    } catch (err) {
+      console.warn('Failed to fetch real emails from API, falling back to mock:', err)
+      setEmails(mockEmails)
+      setTotalEmailsCount(mockEmails.length)
+    } finally {
+      setIsLoading(false)
+      setIsRefreshing(false)
+    }
+  }, [user, isDemoUser, currentPage])
+
+  useEffect(() => {
+    loadEmails()
+  }, [loadEmails])
+
+  // Open full email detail with API lookup for body and attachments
+  const handleOpenEmailDetail = async (email) => {
+    setActiveDetailEmail(email)
+    if (user && !isDemoUser && email.id && !email.id.startsWith('em-')) {
+      try {
+        const { data } = await getEmail(email.id)
+        if (data) {
+          setActiveDetailEmail(formatEmailForUI(data, user?.email))
+        }
+      } catch (err) {
+        console.warn('Could not load detailed email from API:', err)
+      }
+    }
+  }
+
+  // Open full thread with API lookup
+  const handleOpenThread = async (email) => {
+    setActiveThreadEmail(email)
+    if (user && !isDemoUser && email.threadId && !email.id.startsWith('em-')) {
+      try {
+        const { data } = await getThread(email.threadId)
+        if (data && data.messages && data.messages.length > 0) {
+          const threadMsgs = data.messages.map(m => {
+            const formatted = formatEmailForUI(m, user?.email)
+            return {
+              id: formatted.id,
+              sender: formatted.sender,
+              email: formatted.senderEmail,
+              avatar: formatted.avatar,
+              date: formatted.fullDate,
+              type: formatted.direction === 'sent' ? 'Sent' : 'Received',
+              isUnread: !formatted.isRead,
+              content: formatted.body || formatted.snippet,
+              attachments: formatted.attachments || []
+            }
+          })
+          setActiveThreadEmail({
+            ...email,
+            threadMessages: threadMsgs
+          })
+        }
+      } catch (err) {
+        console.warn('Could not load detailed thread from API:', err)
+      }
+    }
+  }
+
+  // Calculate live counts
+  const unreadCount = emails.filter(e => !e.isRead).length
+  const starredCount = emails.filter(e => e.isStarred).length
+  const importantCount = emails.filter(e => e.isImportant).length
 
   // Filtering
   const filtered = emails.filter(em => {
@@ -28,10 +131,10 @@ export default function InboxPage() {
     if (searchTerm) {
       const q = searchTerm.toLowerCase()
       const match =
-        em.subject.toLowerCase().includes(q) ||
-        em.sender.toLowerCase().includes(q) ||
-        em.senderEmail.toLowerCase().includes(q) ||
-        em.snippet.toLowerCase().includes(q)
+        em.subject?.toLowerCase().includes(q) ||
+        em.sender?.toLowerCase().includes(q) ||
+        em.senderEmail?.toLowerCase().includes(q) ||
+        em.snippet?.toLowerCase().includes(q)
       if (!match) return false
     }
     return true
@@ -99,7 +202,7 @@ export default function InboxPage() {
           >
             <Mail size={14} />
             <span>All Mail</span>
-            <span className="pill-count">1,248</span>
+            <span className="pill-count">{totalEmailsCount || emails.length}</span>
           </button>
 
           <button
@@ -107,7 +210,7 @@ export default function InboxPage() {
             onClick={() => setFilterTab('unread')}
           >
             <span>Unread</span>
-            <span className="pill-count">24</span>
+            <span className="pill-count">{unreadCount}</span>
           </button>
 
           <button
@@ -116,7 +219,7 @@ export default function InboxPage() {
           >
             <Star size={13} />
             <span>Starred</span>
-            <span className="pill-count">86</span>
+            <span className="pill-count">{starredCount}</span>
           </button>
 
           <button
@@ -125,16 +228,17 @@ export default function InboxPage() {
           >
             <Flag size={13} />
             <span>Important</span>
-            <span className="pill-count">112</span>
+            <span className="pill-count">{importantCount}</span>
           </button>
 
-          <button className="filter-tab-pill">
-            <Filter size={13} />
-            <span>Filter</span>
-          </button>
-
-          <button className="filter-tab-pill" style={{ padding: '7px 10px' }}>
-            <MoreHorizontal size={14} />
+          <button
+            className="filter-tab-pill"
+            onClick={() => loadEmails(true)}
+            title="Refresh emails from database"
+            disabled={isRefreshing}
+          >
+            <RefreshCw size={13} className={isRefreshing ? 'animate-spin-slow' : ''} />
+            <span>{isRefreshing ? 'Updating...' : 'Refresh'}</span>
           </button>
         </div>
 
@@ -346,7 +450,7 @@ export default function InboxPage() {
                   key={email.id}
                   className={`mail-row ${!email.isRead ? 'unread' : ''} ${isSelected ? 'selected' : ''}`}
                   style={{ gridTemplateColumns: '32px 28px 28px 28px 40px 180px 1fr 28px 100px 90px 100px' }}
-                  onClick={() => setActiveDetailEmail(email)}
+                  onClick={() => handleOpenEmailDetail(email)}
                   id={`email-row-${email.id}`}
                 >
                   {/* Select Checkbox */}
@@ -448,29 +552,48 @@ export default function InboxPage() {
           {/* ── Pagination ─────────────────────────────────── */}
           <div className="pagination-row">
             <div>
-              1 - {filtered.length} of 1,248 emails
+              {totalEmailsCount > 0 ? (
+                <>
+                  {(currentPage - 1) * 50 + 1} - {Math.min(currentPage * 50, totalEmailsCount)} of {totalEmailsCount} emails
+                </>
+              ) : (
+                <>{filtered.length} emails</>
+              )}
             </div>
 
-            <div className="pagination-controls">
-              <button
-                className="page-btn"
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <button className={`page-btn ${currentPage === 1 ? 'active' : ''}`} onClick={() => setCurrentPage(1)}>1</button>
-              <button className={`page-btn ${currentPage === 2 ? 'active' : ''}`} onClick={() => setCurrentPage(2)}>2</button>
-              <button className={`page-btn ${currentPage === 3 ? 'active' : ''}`} onClick={() => setCurrentPage(3)}>3</button>
-              <span style={{ color: 'var(--text-muted)', padding: '0 4px' }}>...</span>
-              <button className="page-btn" onClick={() => setCurrentPage(50)}>50</button>
-              <button
-                className="page-btn"
-                onClick={() => setCurrentPage(p => Math.min(p + 1, 50))}
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
+            {totalPages > 1 && (
+              <div className="pagination-controls">
+                <button
+                  className="page-btn"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => i + 1).map(pageNum => (
+                  <button
+                    key={pageNum}
+                    className={`page-btn ${currentPage === pageNum ? 'active' : ''}`}
+                    onClick={() => setCurrentPage(pageNum)}
+                  >
+                    {pageNum}
+                  </button>
+                ))}
+                {totalPages > 5 && (
+                  <>
+                    <span style={{ color: 'var(--text-muted)', padding: '0 4px' }}>...</span>
+                    <button className="page-btn" onClick={() => setCurrentPage(totalPages)}>{totalPages}</button>
+                  </>
+                )}
+                <button
+                  className="page-btn"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))}
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}

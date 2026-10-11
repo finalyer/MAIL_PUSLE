@@ -1,13 +1,17 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Send, CornerUpLeft, Star, Bookmark, Eye, Info, Search, Filter,
   Paperclip, MoreVertical, ChevronLeft, ChevronRight, CheckSquare, Square
 } from 'lucide-react'
 import { mockSentStats, mockSentEmails, mockEmails } from '../mockData'
+import { getEmails, getEmail } from '../api'
+import { formatEmailForUI } from '../utils/emailAdapter'
+import { useAuth } from '../contexts/AuthContext'
 import ThreadViewModal from '../components/ThreadViewModal'
 import EmailDetailDrawer from '../components/EmailDetailDrawer'
 
 export default function SentPage() {
+  const { user, isDemoUser } = useAuth()
   const [activeFilter, setActiveFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedSent, setSelectedSent] = useState([])
@@ -15,6 +19,40 @@ export default function SentPage() {
   const [activeThread, setActiveThread] = useState(null)
   const [activeDetail, setActiveDetail] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
+
+  useEffect(() => {
+    if (user && !isDemoUser) {
+      getEmails({ direction: 'sent', page: currentPage, page_size: 50 })
+        .then(res => {
+          if (res.data?.items && res.data.items.length > 0) {
+            const formatted = res.data.items.map(item => {
+              const adapted = formatEmailForUI(item, user?.email)
+              return {
+                id: adapted.id,
+                threadId: adapted.threadId,
+                recipient: adapted.to || adapted.sender,
+                recipientEmail: item.recipient_emails?.[0] || 'recipient@domain.com',
+                avatar: adapted.avatar,
+                subject: adapted.subject,
+                preview: adapted.snippet || adapted.body,
+                sentDate: adapted.fullDate,
+                date: adapted.date,
+                replyStatus: 'Sent',
+                readReceiptStatus: 'Delivered',
+                isStarred: adapted.isStarred,
+                isImportant: adapted.isImportant,
+                attachmentsCount: adapted.hasAttachment ? 1 : 0,
+                body: adapted.body,
+                attachments: adapted.attachments,
+                aiReview: adapted.aiReview
+              }
+            })
+            setSentList(formatted)
+          }
+        })
+        .catch(err => console.warn('Could not load sent emails:', err))
+    }
+  }, [user, isDemoUser, currentPage])
 
   const filtered = sentList.filter(item => {
     if (activeFilter === 'replied' && item.replyStatus !== 'Reply received') return false

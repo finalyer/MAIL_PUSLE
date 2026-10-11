@@ -1,30 +1,71 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   Mail, Inbox, Send, Bookmark, Star, Zap, RefreshCw, Eye, HelpCircle,
   CornerUpLeft, CheckCircle2, ChevronRight, AlertCircle
 } from 'lucide-react'
 import { mockDashboardStats, mockActivity7Days, mockActivity30Days, mockEmails, mockNotifications } from '../mockData'
-import { triggerSync } from '../api'
+import { getAnalytics, getEmails, triggerSync } from '../api'
+import { formatEmailForUI } from '../utils/emailAdapter'
+import { useAuth } from '../contexts/AuthContext'
 import EmailDetailDrawer from '../components/EmailDetailDrawer'
 import AIReviewDrawer from '../components/AIReviewDrawer'
 
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const { user, isDemoUser } = useAuth()
   const [activityRange, setActivityRange] = useState('7d')
   const [hoveredPoint, setHoveredPoint] = useState(mockActivity7Days[4])
   const [syncing, setSyncing] = useState(false)
   const [syncToast, setSyncToast] = useState(null)
   const [selectedEmail, setSelectedEmail] = useState(null)
   const [aiReviewEmail, setAiReviewEmail] = useState(null)
+  const [realAnalytics, setRealAnalytics] = useState(null)
+  const [recentEmails, setRecentEmails] = useState(mockEmails.slice(0, 5))
+  const [syncAccountInfo, setSyncAccountInfo] = useState(null)
+
+  useEffect(() => {
+    if (user && !isDemoUser) {
+      // Fetch real analytics overview
+      getAnalytics()
+        .then(res => {
+          if (res.data?.success) {
+            setRealAnalytics(res.data.data)
+            setSyncAccountInfo(res.data.account)
+          }
+        })
+        .catch(err => console.warn('Could not load real analytics:', err))
+
+      // Fetch recent 5 real emails
+      getEmails({ page: 1, page_size: 5 })
+        .then(res => {
+          if (res.data?.items && res.data.items.length > 0) {
+            const formatted = res.data.items.map(item => formatEmailForUI(item, user?.email))
+            setRecentEmails(formatted)
+          }
+        })
+        .catch(err => console.warn('Could not load recent emails:', err))
+    }
+  }, [user, isDemoUser])
 
   const handleSyncNow = async () => {
     setSyncing(true)
     try {
       await triggerSync()
       setSyncToast('Mailbox sync initialized in background.')
+      // Refresh analytics and recent emails after short delay
+      setTimeout(() => {
+        getAnalytics().then(res => {
+          if (res.data?.success) setRealAnalytics(res.data.data)
+        }).catch(() => {})
+        getEmails({ page: 1, page_size: 5 }).then(res => {
+          if (res.data?.items?.length) {
+            setRecentEmails(res.data.items.map(item => formatEmailForUI(item, user?.email)))
+          }
+        }).catch(() => {})
+      }, 3000)
     } catch {
-      setSyncToast('Simulated mailbox sync completed.')
+      setSyncToast('Mailbox sync triggered.')
     } finally {
       setTimeout(() => setSyncing(false), 2000)
       setTimeout(() => setSyncToast(null), 4500)
@@ -32,6 +73,63 @@ export default function DashboardPage() {
   }
 
   const chartData = activityRange === '7d' ? mockActivity7Days : mockActivity30Days
+
+  const dashboardStats = realAnalytics ? [
+    {
+      id: 'received',
+      label: 'Emails Received',
+      value: (realAnalytics.received ?? (realAnalytics.total_emails - (realAnalytics.sent || 0))).toLocaleString(),
+      change: 'Synced',
+      note: 'from Gmail',
+      icon: 'Inbox',
+      alert: false,
+    },
+    {
+      id: 'sent',
+      label: 'Emails Sent',
+      value: (realAnalytics.sent ?? 0).toLocaleString(),
+      change: 'Direct',
+      note: 'outbound messages',
+      icon: 'Send',
+      alert: false,
+    },
+    {
+      id: 'total',
+      label: 'Total In Mailbox',
+      value: (realAnalytics.total_emails ?? 0).toLocaleString(),
+      change: 'Live',
+      note: syncAccountInfo?.gmail_email || 'connected account',
+      icon: 'Mail',
+      alert: false,
+    },
+    {
+      id: 'unread',
+      label: 'Unread Messages',
+      value: (realAnalytics.unread ?? 0).toLocaleString(),
+      change: realAnalytics.unread > 0 ? 'Action needed' : 'Clear',
+      note: 'inbox queue',
+      icon: 'Bookmark',
+      alert: realAnalytics.unread > 10,
+    },
+    {
+      id: 'starred',
+      label: 'Starred & Flagged',
+      value: (realAnalytics.starred ?? 0).toLocaleString(),
+      change: 'Priority',
+      note: 'important items',
+      icon: 'Star',
+      alert: false,
+    },
+    {
+      id: 'attachments',
+      label: 'With Attachments',
+      value: (realAnalytics.with_attachments ?? 0).toLocaleString(),
+      change: 'Files',
+      note: 'docs & media',
+      icon: 'Zap',
+      alert: false,
+    },
+  ] : mockDashboardStats
 
   // Render SVG Smooth Curved Line Chart
   const renderSmoothChart = () => {
@@ -170,15 +268,21 @@ export default function DashboardPage() {
       {/* ── Page Header ─────────────────────────────────── */}
       <div className="page-header">
         <div>
-          <h1 className="page-title">Good morning, Alex</h1>
+          <h1 className="page-title">
+            {user ? `Welcome back, ${user.name || user.email?.split('@')[0]}` : 'Good day'}
+          </h1>
           <p className="page-subtitle">Here is your email activity overview.</p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <div className="status-pill success" style={{ padding: '6px 12px' }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--status-green)', display: 'inline-block' }} />
-            <span>Synced</span>
-            <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>Last synced 5 minutes ago</span>
+            <span>{syncAccountInfo?.sync_status || 'Synced'}</span>
+            <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>
+              {syncAccountInfo?.last_synced_at
+                ? `Last synced ${new Date(syncAccountInfo.last_synced_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                : 'Account active'}
+            </span>
           </div>
 
           <button
@@ -195,7 +299,7 @@ export default function DashboardPage() {
 
       {/* ── 6 KPI Cards Grid ────────────────────────────── */}
       <div className="kpi-grid">
-        {mockDashboardStats.map(stat => (
+        {dashboardStats.map(stat => (
           <div key={stat.id} className="kpi-card" id={`kpi-${stat.id}`}>
             <div className="kpi-icon-box">
               {stat.icon === 'Mail' && <Mail size={17} />}
@@ -413,7 +517,7 @@ export default function DashboardPage() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {mockEmails.slice(0, 5).map(email => (
+            {recentEmails.map(email => (
               <div
                 key={email.id}
                 className="mail-row"

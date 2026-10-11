@@ -24,7 +24,17 @@ class EmailRepository:
             .first()
         )
 
-    def list_paginated(self, gmail_account_id, page: int = 1, page_size: int = 50, thread_id: str = None):
+    def list_paginated(
+        self,
+        gmail_account_id,
+        page: int = 1,
+        page_size: int = 50,
+        thread_id: str = None,
+        direction: Optional[str] = None,
+        is_read: Optional[bool] = None,
+        is_starred: Optional[bool] = None,
+        is_important: Optional[bool] = None,
+    ):
         query = (
             self.db.query(Email)
             .join(Email.thread)
@@ -38,6 +48,15 @@ class EmailRepository:
                     EmailThread.gmail_thread_id == thread_id,
                 )
             )
+        if direction:
+            query = query.filter(Email.direction == direction)
+        if is_read is not None:
+            query = query.filter(Email.is_read == is_read)
+        if is_starred is not None:
+            query = query.filter(Email.is_starred == is_starred)
+        if is_important is not None:
+            query = query.filter(Email.is_important == is_important)
+
         query = query.order_by(desc(Email.gmail_internal_date))
         total = query.count()
         items = query.offset((page - 1) * page_size).limit(page_size).all()

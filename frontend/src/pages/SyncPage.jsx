@@ -4,33 +4,55 @@ import {
   MoreVertical
 } from 'lucide-react'
 import { mockSyncHistory } from '../mockData'
-import { getSyncStatus, triggerSync } from '../api'
+import { getSyncStatus, triggerSync, getSyncJobs } from '../api'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function SyncPage() {
+  const { user, isDemoUser } = useAuth()
   const [syncHistory, setSyncHistory] = useState(mockSyncHistory)
-  const [isSyncActive, setIsSyncActive] = useState(true)
-  const [progress, setProgress] = useState(64)
+  const [isSyncActive, setIsSyncActive] = useState(false)
+  const [progress, setProgress] = useState(100)
   const [triggering, setTriggering] = useState(false)
 
-  // Fetch real sync status if backend available
+  // Fetch real sync status and jobs
   useEffect(() => {
-    getSyncStatus()
-      .then(res => {
-        if (res.data?.status === 'syncing') {
-          setIsSyncActive(true)
-        }
-      })
-      .catch(() => {})
-  }, [])
+    if (user && !isDemoUser) {
+      getSyncStatus()
+        .then(res => {
+          if (res.data) {
+            setIsSyncActive(res.data.sync_status === 'SYNCING')
+            setProgress(res.data.sync_status === 'SYNCING' ? 64 : 100)
+          }
+        })
+        .catch(() => {})
+
+      getSyncJobs()
+        .then(res => {
+          if (res.data && res.data.length > 0) {
+            const formatted = res.data.map(job => ({
+              id: job.id,
+              type: job.job_type === 'INITIAL_SYNC' ? 'Initial sync' : 'Manual sync',
+              subType: 'Gmail Inbox & Threads',
+              status: job.status === 'COMPLETED' ? 'Completed' : job.status === 'RUNNING' ? 'In progress' : job.status,
+              date: new Date(job.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }),
+              records: job.status === 'COMPLETED' ? 'Synchronized' : (job.error_message || 'Pending'),
+              duration: job.status === 'COMPLETED' ? 'Completed' : 'Running'
+            }))
+            setSyncHistory(formatted)
+          }
+        })
+        .catch(() => {})
+    }
+  }, [user, isDemoUser])
 
   const handleTriggerSync = async () => {
     setTriggering(true)
     try {
       await triggerSync()
+      setIsSyncActive(true)
+      setProgress(25)
+      setTimeout(() => setProgress(75), 1500)
     } catch {}
-    setIsSyncActive(true)
-    setProgress(15)
-    setTimeout(() => setProgress(64), 1000)
     setTriggering(false)
   }
 

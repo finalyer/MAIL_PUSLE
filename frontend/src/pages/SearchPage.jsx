@@ -1,45 +1,93 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Search as SearchIcon, Filter, X, ChevronDown, Paperclip, Star, Flag,
-  Sparkles, CornerUpLeft, MoreVertical, LayoutList, LayoutGrid, CheckSquare, Square
+  Sparkles, CornerUpLeft, MoreVertical, LayoutList, LayoutGrid, CheckSquare, Square, Loader2
 } from 'lucide-react'
 import { mockEmails } from '../mockData'
+import { search as apiSearch } from '../api'
+import { formatEmailForUI } from '../utils/emailAdapter'
+import { useAuth } from '../contexts/AuthContext'
 import EmailDetailDrawer from '../components/EmailDetailDrawer'
 import AIReviewDrawer from '../components/AIReviewDrawer'
 
 export default function SearchPage() {
+  const { user, isDemoUser } = useAuth()
   const [searchParams] = useSearchParams()
-  const initialQuery = searchParams.get('q') || 'project presentation'
+  const initialQuery = searchParams.get('q') || ''
 
   const [query, setQuery] = useState(initialQuery)
-  const [showAdvanced, setShowAdvanced] = useState(true)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [realResults, setRealResults] = useState(null)
+  const [searching, setSearching] = useState(false)
 
   // Filters
-  const [folder, setFolder] = useState('Sent')
+  const [folder, setFolder] = useState('All')
   const [sender, setSender] = useState('')
   const [recipient, setRecipient] = useState('')
   const [subjectFilter, setSubjectFilter] = useState('')
-  const [hasAttachment, setHasAttachment] = useState(true)
+  const [hasAttachment, setHasAttachment] = useState(false)
   const [isUnread, setIsUnread] = useState(false)
-  const [isStarred, setIsStarred] = useState(true)
-  const [isImportant, setIsImportant] = useState(true)
+  const [isStarred, setIsStarred] = useState(false)
+  const [isImportant, setIsImportant] = useState(false)
   const [isReplied, setIsReplied] = useState(false)
   const [isReadReceipt, setIsReadReceipt] = useState(false)
 
   // Active filter tags
-  const [activeTags, setActiveTags] = useState([
-    'folder:sent',
-    'has:attachment',
-    'after:2026-09-01',
-    'important:true'
-  ])
+  const [activeTags, setActiveTags] = useState([])
 
   const [sortBy, setSortBy] = useState('Most relevant')
   const [viewMode, setViewMode] = useState('list')
   const [selectedIds, setSelectedIds] = useState([])
   const [activeDetail, setActiveDetail] = useState(null)
   const [activeAiReview, setActiveAiReview] = useState(null)
+
+  const performSearch = useCallback(async (q) => {
+    if (!user || isDemoUser) return
+    setSearching(true)
+    try {
+      const { data } = await apiSearch(q, { page: 1, page_size: 50 })
+      if (data && data.items) {
+        const formatted = data.items.map(item => {
+          const adapted = formatEmailForUI(item, user?.email)
+          return {
+            id: adapted.id,
+            threadId: adapted.threadId,
+            sender: adapted.sender,
+            email: adapted.senderEmail,
+            avatar: adapted.avatar,
+            subject: adapted.subject,
+            snippet: adapted.snippet,
+            folder: adapted.direction === 'sent' ? 'Sent' : 'Inbox',
+            labels: adapted.category,
+            date: adapted.fullDate,
+            replyStatus: adapted.direction === 'sent' ? 'Replied' : 'Received',
+            hasAttachment: adapted.hasAttachment,
+            isStarred: adapted.isStarred,
+            isImportant: adapted.isImportant,
+            isRead: adapted.isRead,
+            body: adapted.body,
+            attachments: adapted.attachments,
+            aiReview: adapted.aiReview
+          }
+        })
+        setRealResults(formatted)
+      }
+    } catch (err) {
+      console.warn('API search failed, falling back:', err)
+    } finally {
+      setSearching(false)
+    }
+  }, [user, isDemoUser])
+
+  useEffect(() => {
+    if (query && user && !isDemoUser) {
+      const timer = setTimeout(() => performSearch(query), 300)
+      return () => clearTimeout(timer)
+    } else if (!query && user && !isDemoUser) {
+      performSearch('')
+    }
+  }, [query, performSearch, user, isDemoUser])
 
   const removeTag = (tag) => {
     setActiveTags(prev => prev.filter(t => t !== tag))
@@ -200,6 +248,8 @@ export default function SearchPage() {
       )
     )
   }
+
+  const displayedResults = realResults !== null ? realResults : searchResults
 
   return (
     <div className="page-container fade-in">
@@ -424,16 +474,22 @@ export default function SearchPage() {
           <div />
         </div>
 
-        {searchResults.map(item => (
+        {displayedResults.map(item => (
           <div
             key={item.id}
             className="mail-row"
             style={{ gridTemplateColumns: '32px 28px 28px 40px 180px 1.4fr 80px 100px 28px 120px 100px 90px 30px' }}
             onClick={() => setActiveDetail({
-              ...mockEmails[0],
+              ...(item.body ? item : mockEmails[0]),
+              id: item.id,
+              threadId: item.threadId,
               subject: item.subject,
               sender: item.sender,
-              senderEmail: item.email
+              senderEmail: item.email || item.senderEmail,
+              avatar: item.avatar,
+              date: item.date,
+              body: item.body || item.snippet,
+              snippet: item.snippet
             })}
           >
             <div><Square size={14} className="row-check" /></div>
@@ -452,10 +508,10 @@ export default function SearchPage() {
             {/* Subject with highlighted match keyword */}
             <div className="truncate" style={{ fontSize: 13 }}>
               <span style={{ fontWeight: 600, color: '#ffffff' }}>
-                {renderHighlighted(item.subject, 'project presentation')}
+                {renderHighlighted(item.subject, query)}
               </span>
               <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>
-                {renderHighlighted(item.snippet, 'project presentation')}
+                {renderHighlighted(item.snippet, query)}
               </span>
             </div>
 

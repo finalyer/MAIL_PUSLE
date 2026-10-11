@@ -23,13 +23,24 @@ def list_emails(
     page: int = 1,
     page_size: int = 200,
     thread_id: str = None,
+    direction: str = None,
+    is_read: bool = None,
+    is_starred: bool = None,
+    is_important: bool = None,
     db: Session = Depends(get_db),
 ):
     user_id = get_current_user_id(request)
     account = _get_account(user_id, db)
     email_repo = EmailRepository(db)
     items, total, pages = email_repo.list_paginated(
-        account.id, page=page, page_size=page_size, thread_id=thread_id
+        account.id,
+        page=page,
+        page_size=page_size,
+        thread_id=thread_id,
+        direction=direction,
+        is_read=is_read,
+        is_starred=is_starred,
+        is_important=is_important,
     )
     return PaginatedEmails(items=items, total=total, page=page, page_size=page_size, pages=pages)
 

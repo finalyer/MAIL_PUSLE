@@ -11,7 +11,7 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
-        cookieDomainRewrite: 'localhost',
+        cookieDomainRewrite: '',
         configure: (proxy) => {
           proxy.on('proxyRes', (proxyRes) => {
             // Rewrite Set-Cookie so the browser stores it under localhost:5173
