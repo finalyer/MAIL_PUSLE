@@ -1,18 +1,13 @@
-
 from fastapi import FastAPI
-
 from fastapi.middleware.cors import CORSMiddleware
-
 from starlette.middleware.sessions import SessionMiddleware
 
+from app import models  # noqa: F401 - Register all SQLAlchemy models
+from app.api import analytics, auth, emails, search, sync, threads
 from app.core.config import settings
-from app.core.database import engine, Base
-from app.models import *  # Register all models
+from app.core.database import Base, engine
 
-# Import API routers
-from app.api import auth, threads, emails, search, analytics, sync
-
-# Create all tables (Alembic manages schema, this ensures tables exist on startup)
+# Create all tables (Alembic manages schema; ensures tables exist on startup)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -22,7 +17,7 @@ app = FastAPI(
 )
 
 # Session middleware (for OAuth state and user session)
-# same_site="lax" + https_only=False is required for local dev (Vite proxy :5173 → :8000)
+# same_site="lax" + https_only=False is required for local dev / proxy
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
@@ -31,10 +26,16 @@ app.add_middleware(
     max_age=86400,  # 1 day
 )
 
-# CORS — allow local frontend dev server
+# CORS — allow local frontend dev server and tunnels
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|.*\.trycloudflare\.com|.*\.vercel\.app)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
